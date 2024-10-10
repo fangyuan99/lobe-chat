@@ -3,6 +3,7 @@ import { sha256 } from 'js-sha256';
 import { StateCreator } from 'zustand/vanilla';
 
 import { message } from '@/components/AntdStaticMethods';
+import { LOBE_CHAT_CLOUD } from '@/const/branding';
 import { isServerMode } from '@/const/version';
 import { fileService } from '@/services/file';
 import { ServerService } from '@/services/file/server';
@@ -16,7 +17,7 @@ const serverFileService = new ServerService();
 interface UploadWithProgressParams {
   file: File;
   knowledgeBaseId?: string;
-  onStatusUpdate: (
+  onStatusUpdate?: (
     data:
       | {
           id: string;
@@ -28,6 +29,12 @@ interface UploadWithProgressParams {
           type: 'removeFile';
         },
   ) => void;
+  /**
+   * Optional flag to indicate whether to skip the file type check.
+   * When set to `true`, any file type checks will be bypassed.
+   * Default is `false`, which means file type checks will be performed.
+   */
+  skipCheckFileType?: boolean;
 }
 
 interface UploadWithProgressResult {
@@ -51,11 +58,12 @@ export const createFileUploadSlice: StateCreator<
   [],
   FileUploadAction
 > = (set, get) => ({
-  internal_uploadToClientDB: async ({ file, onStatusUpdate }) => {
-    if (!file.type.startsWith('image')) {
-      onStatusUpdate({ id: file.name, type: 'removeFile' });
+  internal_uploadToClientDB: async ({ file, onStatusUpdate, skipCheckFileType }) => {
+    if (!skipCheckFileType && !file.type.startsWith('image')) {
+      onStatusUpdate?.({ id: file.name, type: 'removeFile' });
       message.info({
         content: t('upload.fileOnlySupportInServerMode', {
+          cloud: LOBE_CHAT_CLOUD,
           ext: file.name.split('.').pop(),
           ns: 'error',
         }),
@@ -73,7 +81,7 @@ export const createFileUploadSlice: StateCreator<
       file,
     );
 
-    onStatusUpdate({
+    onStatusUpdate?.({
       id: file.name,
       type: 'updateFile',
       value: {
@@ -99,19 +107,21 @@ export const createFileUploadSlice: StateCreator<
     // 2. if file exist, just skip upload
     if (checkStatus.isExist) {
       metadata = checkStatus.metadata as FileMetadata;
-      onStatusUpdate({
+      onStatusUpdate?.({
         id: file.name,
         type: 'updateFile',
         value: { status: 'processing', uploadState: { progress: 100, restTime: 0, speed: 0 } },
       });
     } else {
       // 2. if file don't exist, need upload files
-      metadata = await uploadService.uploadWithProgress(file, (status, upload) => {
-        onStatusUpdate({
-          id: file.name,
-          type: 'updateFile',
-          value: { status: status === 'success' ? 'processing' : status, uploadState: upload },
-        });
+      metadata = await uploadService.uploadWithProgress(file, {
+        onProgress: (status, upload) => {
+          onStatusUpdate?.({
+            id: file.name,
+            type: 'updateFile',
+            value: { status: status === 'success' ? 'processing' : status, uploadState: upload },
+          });
+        },
       });
     }
 
@@ -140,7 +150,7 @@ export const createFileUploadSlice: StateCreator<
       knowledgeBaseId,
     );
 
-    onStatusUpdate({
+    onStatusUpdate?.({
       id: file.name,
       type: 'updateFile',
       value: {
@@ -154,11 +164,11 @@ export const createFileUploadSlice: StateCreator<
     return data;
   },
 
-  uploadWithProgress: async ({ file, onStatusUpdate, knowledgeBaseId }) => {
+  uploadWithProgress: async (payload) => {
     const { internal_uploadToServer, internal_uploadToClientDB } = get();
 
-    if (isServerMode) return internal_uploadToServer({ file, knowledgeBaseId, onStatusUpdate });
+    if (isServerMode) return internal_uploadToServer(payload);
 
-    return internal_uploadToClientDB({ file, onStatusUpdate });
+    return internal_uploadToClientDB(payload);
   },
 });
